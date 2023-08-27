@@ -39,7 +39,14 @@ impl DirNode {
     pub fn exist(&self, name: &str) -> bool {
         self.children.read().contains_key(name)
     }
-
+    pub fn add_node(&self, name: &str, node: Option<VfsNodeRef>) -> VfsResult {
+        if let Some(cur_node) = node {
+            self.children.write().insert(name.into(), cur_node);
+            Ok(())
+        } else {
+            Err(VfsError::InvalidData)
+        }
+    }
     /// Creates a new node with the given name and type in this directory.
     pub fn create_node(&self, name: &str, ty: VfsNodeType) -> VfsResult {
         if self.exist(name) {
@@ -66,6 +73,13 @@ impl DirNode {
         }
         children.remove(name);
         Ok(())
+    }
+    pub fn back_to_root(&self) {
+        let cur_node: Arc<DirNode> = match self.this.upgrade() {
+            Some(val) => val,
+            _ => return (),
+        };
+        let _ = cur_node.clone().lookup("/");
     }
 }
 
@@ -164,9 +178,29 @@ impl VfsNodeOps for DirNode {
             self.remove_node(name)
         }
     }
-
+    // bug: self is not from root!!!
     fn rename(&self, _src: &str, _dst: &str) -> VfsResult {
-        todo!("Implement rename for ramfs!");
+        let cur_node: Arc<DirNode> = match self.this.upgrade() {
+            Some(val) => val,
+            _ => return Err(VfsError::BadAddress),
+        };
+        log::warn!("{} {}\n", _src, _dst);
+        let from_inode: Arc<dyn VfsNodeOps> = match cur_node.clone().lookup(_src) {
+            Ok(val) => val,
+            _ => {
+                log::warn!("{} not exist!\n", _src);
+                return Err(VfsError::NotFound);
+            }
+        };
+        self.remove(_src)?;
+        let (new_name, _) = basename(_dst);
+        match cur_node.get_attr().unwrap().file_type() {
+            VfsNodeType::Dir => {
+                cur_node.children.write().insert(new_name.into(), from_inode.clone());
+            },
+            _ => return Err(VfsError::NotADirectory),
+        }
+        return Ok(());
     }
 
     axfs_vfs::impl_vfs_dir_default! {}
@@ -176,5 +210,12 @@ fn split_path(path: &str) -> (&str, Option<&str>) {
     let trimmed_path = path.trim_start_matches('/');
     trimmed_path.find('/').map_or((trimmed_path, None), |n| {
         (&trimmed_path[..n], Some(&trimmed_path[n + 1..]))
+    })
+}
+
+fn basename(path : &str) -> (&str, Option<&str>) {
+    let trimmed_path = path.trim_end_matches('/');
+    trimmed_path.rfind('/').map_or((trimmed_path, None), |n| {
+        (&trimmed_path[n + 1..], Some(&trimmed_path[..n + 1]))
     })
 }
