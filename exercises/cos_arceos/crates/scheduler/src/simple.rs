@@ -1,11 +1,13 @@
 use alloc::{collections::VecDeque, sync::Arc};
-use core::ops::Deref;
+use core::{ops::Deref, sync::atomic::AtomicIsize};
+use core::sync::atomic::Ordering;
 
 use crate::BaseScheduler;
 
 /// A task wrapper for the [`SimpleScheduler`].
 pub struct SimpleTask<T> {
     inner: T,
+    time_slice: AtomicIsize
 }
 
 impl<T> SimpleTask<T> {
@@ -13,6 +15,7 @@ impl<T> SimpleTask<T> {
     pub const fn new(inner: T) -> Self {
         Self {
             inner,
+            time_slice : AtomicIsize::new(20)
         }
     }
 
@@ -82,7 +85,8 @@ impl<T> BaseScheduler for SimpleScheduler<T> {
     }
 
     fn task_tick(&mut self, _current: &Self::SchedItem) -> bool {
-        false // no reschedule
+        let old_slice = _current.time_slice.fetch_sub(1, Ordering::Release);
+        old_slice <= 1
     }
 
     fn set_priority(&mut self, _task: &Self::SchedItem, _prio: isize) -> bool {
